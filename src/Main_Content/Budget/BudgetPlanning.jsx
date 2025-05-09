@@ -18,7 +18,7 @@ export default function BudgetPlanning() {
 
       try {
         // Fetch current user
-        const userRes = await fetch('http://localhost:5000/api/students/current', {
+        const userRes = await fetch('https://backendfinmate.onrender.com/api/students/current', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
@@ -32,7 +32,7 @@ export default function BudgetPlanning() {
         
 
         // Fetch transactions
-        const transRes = await fetch('http://localhost:5000/api/student/transaction', {
+        const transRes = await fetch('https://backendfinmate.onrender.com/api/student/transaction', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',

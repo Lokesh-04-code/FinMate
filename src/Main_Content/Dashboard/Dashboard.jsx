@@ -17,7 +17,7 @@ export default function Dashboard() {
           return;
         }
 
-        const response = await fetch('http://localhost:5000/api/student/transaction', {
+        const response = await fetch('https://backendfinmate.onrender.com/api/student/transaction', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',

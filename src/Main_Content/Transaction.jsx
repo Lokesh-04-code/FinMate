@@ -17,7 +17,7 @@ export default function TransactionList() {
   useEffect(() => {
     const fetchTransactions = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/student/transaction', {
+        const response = await fetch('https://backendfinmate.onrender.com/api/student/transaction', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
@@ -53,7 +53,7 @@ export default function TransactionList() {
 
   const handleDelete = async (transactionId) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/student/transaction/${transactionId}`, {
+      const response = await fetch(`https://backendfinmate.onrender.com/api/student/transaction/${transactionId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -92,7 +92,7 @@ export default function TransactionList() {
 
   const handleEditSubmit = async (txnId) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/student/transaction/${txnId}`, {
+      const response = await fetch(`https://backendfinmate.onrender.com/api/student/transaction/${txnId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

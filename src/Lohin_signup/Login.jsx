@@ -12,7 +12,7 @@ const Login = (props) => {
         };
 
         try {
-            const response = await fetch('http://localhost:5000/api/students/login', {
+            const response = await fetch('https://backendfinmate.onrender.com/api/students/login', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

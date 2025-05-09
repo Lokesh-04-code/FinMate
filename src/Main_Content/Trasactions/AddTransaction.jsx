@@ -23,7 +23,7 @@ const AddTransaction = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch("http://localhost:5000/api/student/transaction", {
+      const response = await fetch("https://backendfinmate.onrender.com/api/student/transaction", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

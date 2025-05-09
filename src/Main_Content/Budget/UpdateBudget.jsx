@@ -48,7 +48,7 @@ function UpdateBudget({ user ,rerender}) {
     });
 
     try {
-      const res = await fetch('http://localhost:5000/api/students/update', {
+      const res = await fetch('https://backendfinmate.onrender.com/api/students/update', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
