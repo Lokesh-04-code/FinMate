@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 const Login = (props) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
 
     const handleLogin = async () => {
         const loginData = {
@@ -11,6 +12,7 @@ const Login = (props) => {
             password: password,
         };
 
+        setLoading(true);
         try {
             const response = await fetch('https://backendfinmate.onrender.com/api/students/login', {
                 method: 'POST',
@@ -19,23 +21,22 @@ const Login = (props) => {
                 },
                 body: JSON.stringify(loginData),
             });
-           
+
             const result = await response.json();
 
             if (response.ok) {
                 toast.success('Login successful!');
-                props.toggle((val)=>!val);
-                console.log(result); // token or user data
-                // Optionally save token to localStorage and redirect
+                props.toggle((val) => !val);
                 localStorage.setItem('token', result.token);
-                console.log(result.token)
-                // window.location.href = '/dashboard'; 
+                console.log(result.token);
+                // window.location.href = '/dashboard';
             } else {
                 toast.error(result.message || 'Login failed!');
             }
         } catch (error) {
-           
             toast.error('An error occurred. Please try again.');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -71,10 +72,21 @@ const Login = (props) => {
                     </div>
                     <button
                         onClick={handleLogin}
-                        className="w-full py-3 bg-blue-700 text-white font-semibold rounded-lg hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 transition duration-300"
+                        disabled={loading}
+                        className={`w-full py-3 text-white font-semibold rounded-lg transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+                            loading
+                                ? 'bg-blue-900 cursor-not-allowed'
+                                : 'bg-blue-700 hover:bg-blue-800 focus:ring-blue-500'
+                        }`}
                     >
-                        Sign In
+                        {loading ? 'Signing In...' : 'Sign In'}
                     </button>
+
+                    {loading && (
+                        <div className="text-yellow-400 text-sm text-center mt-2">
+                            ⏳ Please wait... the server may take up to 30 seconds to respond.
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
