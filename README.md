@@ -229,8 +229,8 @@ switch(statusCode) {
 ### Create .env file:
 ```
 PORT=5000
-CONNECTION_STRING=mongodb+srv://admin:admin@lokeshcluster.hqievee.mongodb.net/mycontacts-backend?retryWrites=true&w=majority&appName=Lokeshcluster
-ACCESS_TOKEN_SECRET=lokesh@123
+CONNECTION_STRING='######'
+ACCESS_TOKEN_SECRET='######'
 ```
 ### to connect with the mongodb from vs code
 #### use this string
