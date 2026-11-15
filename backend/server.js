@@ -36,7 +36,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : [
       'http://localhost:3000',
       'http://localhost:5173',
-      'https://backendfinmate.onrender.com', // production frontend origin
+      'https://backendfinmate.onrender.com',
+      'https://studysave.netlify.app', // production frontend origin
     ];
 
 app.use(
