@@ -4,16 +4,35 @@ const asyncHandler = require('express-async-handler');
 const Student = require('../models/studentModel');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const {
+  getRefreshTokenCookieOptions,
+  getOAuthCookieOptions,
+  getCookieClearOptions,
+} = require('../utils/cookieOptions');
+
+// ── In-Memory One-Time Authorization Code Handoff Store ───────
+// Stores short-lived (60 sec) single-use codes to prevent leaking JWTs in URLs
+const handoffStore = new Map();
+
+// Periodic cleanup of expired handoff codes every 60 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, data] of handoffStore.entries()) {
+    if (data.expiresAt <= now) {
+      handoffStore.delete(code);
+    }
+  }
+}, 60000);
 
 // Token helpers (aligned with studentController)
 const generateAccessToken = (user) => {
   return jwt.sign(
     {
-      user: { id: user._id, username: user.username, email: user.email },
+      user: { id: user._id.toString(), username: user.username, email: user.email },
       jti: crypto.randomUUID(),
     },
     process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: '15m', algorithm: 'HS256' }
   );
 };
 
@@ -24,7 +43,7 @@ const generateRefreshToken = (user) => {
       jti: crypto.randomUUID(),
     },
     process.env.REFRESH_TOKEN_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: '7d', algorithm: 'HS256' }
   );
 };
 
@@ -41,7 +60,9 @@ const saveRefreshToken = async (user, rawToken) => {
 
 /**
  * GET /api/auth/google
- * Initiates the Google OAuth 2.0 redirect flow.
+ * Initiates the Google OAuth 2.1 authorization code flow with:
+ *  - Cryptographic state parameter (anti-CSRF)
+ *  - PKCE (Proof Key for Code Exchange via S256 code challenge)
  */
 router.get(
   '/google',
@@ -60,12 +81,30 @@ router.get(
       ? defaultCallback
       : (process.env.GOOGLE_CALLBACK_URL || defaultCallback);
 
+    // 1. Generate cryptographic anti-CSRF state
+    const state = crypto.randomBytes(32).toString('hex');
+
+    // 2. Generate PKCE code verifier and code challenge (S256)
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto
+      .createHash('sha256')
+      .update(codeVerifier)
+      .digest('base64url');
+
+    // Store state and code verifier in secure, short-lived HttpOnly cookies
+    const oAuthCookieOpts = getOAuthCookieOptions();
+    res.cookie('oauth_state', state, oAuthCookieOpts);
+    res.cookie('oauth_pkce_verifier', codeVerifier, oAuthCookieOpts);
+
     const googleAuthUrl =
       `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${encodeURIComponent(clientId)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `response_type=code&` +
       `scope=${encodeURIComponent('openid email profile')}&` +
+      `state=${encodeURIComponent(state)}&` +
+      `code_challenge=${encodeURIComponent(codeChallenge)}&` +
+      `code_challenge_method=S256&` +
       `access_type=offline&` +
       `prompt=consent`;
 
@@ -75,10 +114,12 @@ router.get(
 
 /**
  * GET & POST /api/auth/google/callback
- * Handles Google OAuth redirect callback.
+ * Handles Google OAuth redirect callback with:
+ *  - State verification
+ *  - PKCE code_verifier token exchange
+ *  - Secure one-time code handoff (no raw JWT in URL)
  */
 const handleGoogleCallback = asyncHandler(async (req, res) => {
-  // Support both GET (?code=...) and POST (body.credential or body.code from GIS)
   const code = req.query.code || req.body?.code;
   const credential = req.body?.credential;
   const error = req.query.error;
@@ -98,12 +139,28 @@ const handleGoogleCallback = asyncHandler(async (req, res) => {
     return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(error)}`);
   }
 
+  // 1. State validation for authorization code redirect flow
+  if (code && !credential) {
+    const storedState = req.cookies?.oauth_state;
+    const returnedState = req.query.state;
+
+    // Clear state cookie immediately
+    res.clearCookie('oauth_state', getCookieClearOptions());
+
+    if (!returnedState || !storedState || returnedState !== storedState) {
+      res.clearCookie('oauth_pkce_verifier', getCookieClearOptions());
+      return res.redirect(
+        `${frontendUrl}/login?error=${encodeURIComponent('OAuth state verification failed. Possible CSRF attempt.')}`
+      );
+    }
+  }
+
   let googleUser;
 
   // Case 1: GIS POSTed an ID token credential directly
   if (credential) {
     const verifyRes = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
     );
     if (!verifyRes.ok) {
       return res.redirect(
@@ -117,7 +174,7 @@ const handleGoogleCallback = asyncHandler(async (req, res) => {
       sub: tokenInfo.sub,
     };
   }
-  // Case 2: Server authorization code exchange
+  // Case 2: Server authorization code exchange with PKCE
   else if (code) {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -133,16 +190,27 @@ const handleGoogleCallback = asyncHandler(async (req, res) => {
       );
     }
 
+    // Retrieve PKCE code verifier from cookie and clean it up
+    const codeVerifier = req.cookies?.oauth_pkce_verifier;
+    res.clearCookie('oauth_pkce_verifier', getCookieClearOptions());
+
+    const tokenParams = {
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code',
+    };
+
+    // Attach PKCE verifier if available
+    if (codeVerifier) {
+      tokenParams.code_verifier = codeVerifier;
+    }
+
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: 'authorization_code',
-      }),
+      body: new URLSearchParams(tokenParams),
     });
 
     if (!tokenRes.ok) {
@@ -156,9 +224,8 @@ const handleGoogleCallback = asyncHandler(async (req, res) => {
     const tokenData = await tokenRes.json();
     const idToken = tokenData.id_token;
 
-    // Decode ID token via tokeninfo
     const verifyRes = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
     );
     if (!verifyRes.ok) {
       return res.redirect(
@@ -197,18 +264,66 @@ const handleGoogleCallback = asyncHandler(async (req, res) => {
   const refreshToken = generateRefreshToken(user);
   await saveRefreshToken(user, refreshToken);
 
-  res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+  // Set secure cross-site HttpOnly cookie for Netlify/Render
+  res.cookie('refreshToken', refreshToken, getRefreshTokenCookieOptions());
+
+  // 3. SECURE TOKEN HANDOFF:
+  // Instead of passing the raw access token in the URL query string,
+  // generate a single-use, 60-second handoff code.
+  const handoffCode = crypto.randomBytes(32).toString('hex');
+  handoffStore.set(handoffCode, {
+    userId: user._id,
+    accessToken,
+    refreshToken,
+    expiresAt: Date.now() + 60 * 1000, // 60 seconds TTL
   });
 
-  // Redirect to frontend with access token in query param
-  return res.redirect(`${frontendUrl}/?token=${encodeURIComponent(accessToken)}`);
+  // Redirect to frontend with the single-use handoff code
+  return res.redirect(`${frontendUrl}/?code=${encodeURIComponent(handoffCode)}`);
 });
 
 router.get('/google/callback', handleGoogleCallback);
 router.post('/google/callback', handleGoogleCallback);
+
+/**
+ * POST /api/auth/exchange
+ * Exchanges a single-use handoff code for an access token.
+ * This ensures the JWT access token is transmitted securely in an HTTP POST body,
+ * never exposed in URL query parameters, browser history, or server access logs.
+ */
+router.post(
+  '/exchange',
+  asyncHandler(async (req, res) => {
+    const { code } = req.body;
+
+    if (!code) {
+      res.status(400);
+      throw new Error('Authorization handoff code is required');
+    }
+
+    const handoffData = handoffStore.get(code);
+
+    if (!handoffData) {
+      res.status(401);
+      throw new Error('Invalid or already used authorization handoff code');
+    }
+
+    // Immediately remove from store to enforce single-use
+    handoffStore.delete(code);
+
+    if (Date.now() > handoffData.expiresAt) {
+      res.status(401);
+      throw new Error('Authorization handoff code has expired');
+    }
+
+    // Ensure refresh cookie is active
+    res.cookie('refreshToken', handoffData.refreshToken, getRefreshTokenCookieOptions());
+
+    res.status(200).json({
+      status: 'success',
+      token: handoffData.accessToken,
+    });
+  })
+);
 
 module.exports = router;

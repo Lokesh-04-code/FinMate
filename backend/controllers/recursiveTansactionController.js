@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const mongoose = require('mongoose');
 const RecurringTransaction = require('../models/recursiveTransactionModel');
 
 /**
@@ -14,6 +15,11 @@ const getRecTrannsactions = asyncHandler(async (req, res) => {
  * GET /api/student/rec/:id
  */
 const getRecurringTransaction = asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    res.status(400);
+    throw new Error('Invalid recurring transaction ID format');
+  }
+
   const recurringTransaction = await RecurringTransaction.findById(req.params.id);
 
   if (!recurringTransaction) {
@@ -31,9 +37,13 @@ const getRecurringTransaction = asyncHandler(async (req, res) => {
 
 /**
  * PUT /api/student/rec/:id
- * FIX: Whitelisted fields prevent MongoDB operator injection.
  */
 const updateRecurringTransaction = asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    res.status(400);
+    throw new Error('Invalid recurring transaction ID format');
+  }
+
   const recurringTransaction = await RecurringTransaction.findById(req.params.id);
 
   if (!recurringTransaction) {
@@ -46,14 +56,33 @@ const updateRecurringTransaction = asyncHandler(async (req, res) => {
     throw new Error('Access denied — this transaction belongs to another user');
   }
 
-  // Whitelist updatable fields
   const { title, amount, type, category, frequency, date } = req.body;
   const updatePayload = {};
-  if (title !== undefined) updatePayload.title = title;
-  if (amount !== undefined) updatePayload.amount = amount;
-  if (type !== undefined) updatePayload.type = type;
-  if (category !== undefined) updatePayload.category = category;
-  if (frequency !== undefined) updatePayload.frequency = frequency;
+
+  if (title !== undefined) updatePayload.title = title.trim();
+  if (amount !== undefined) {
+    const num = typeof amount === 'number' ? amount : parseFloat(amount);
+    if (isNaN(num) || num <= 0) {
+      res.status(400);
+      throw new Error('amount must be a positive number');
+    }
+    updatePayload.amount = num;
+  }
+  if (type !== undefined) {
+    if (!['income', 'expense'].includes(type)) {
+      res.status(400);
+      throw new Error('type must be either "income" or "expense"');
+    }
+    updatePayload.type = type;
+  }
+  if (category !== undefined) updatePayload.category = category.trim();
+  if (frequency !== undefined) {
+    if (!['daily', 'weekly', 'monthly'].includes(frequency)) {
+      res.status(400);
+      throw new Error('frequency must be "daily", "weekly", or "monthly"');
+    }
+    updatePayload.frequency = frequency;
+  }
   if (date !== undefined) updatePayload.date = new Date(date);
 
   const updatedRecurringTransaction = await RecurringTransaction.findByIdAndUpdate(
@@ -69,6 +98,11 @@ const updateRecurringTransaction = asyncHandler(async (req, res) => {
  * DELETE /api/student/rec/:id
  */
 const deleteRecurringTransaction = asyncHandler(async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    res.status(400);
+    throw new Error('Invalid recurring transaction ID format');
+  }
+
   const recurringTransaction = await RecurringTransaction.findById(req.params.id);
 
   if (!recurringTransaction) {
@@ -87,13 +121,10 @@ const deleteRecurringTransaction = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/student/rec
- * FIX: Was referencing `Student` (capital S) but the import was `student` (lowercase)
- *      causing ReferenceError: Student is not defined.
- * FIX: Now uses req.user.id directly — no extra DB lookup needed.
  */
 const createRecurringTransaction = asyncHandler(async (req, res) => {
   const { title, amount, type, category, frequency, date } = req.body;
-  const userId = req.user.id; // FIX: use directly from JWT
+  const userId = req.user.id;
 
   if (!title || amount === undefined || !type || !category || !frequency) {
     res.status(400);
@@ -105,7 +136,8 @@ const createRecurringTransaction = asyncHandler(async (req, res) => {
     throw new Error('type must be either "income" or "expense"');
   }
 
-  if (typeof amount !== 'number' || amount <= 0) {
+  const numericAmount = typeof amount === 'number' ? amount : parseFloat(amount);
+  if (isNaN(numericAmount) || numericAmount <= 0) {
     res.status(400);
     throw new Error('amount must be a positive number');
   }
@@ -117,10 +149,10 @@ const createRecurringTransaction = asyncHandler(async (req, res) => {
 
   const newRecurringTransaction = await RecurringTransaction.create({
     user: userId,
-    title,
-    amount,
+    title: title.trim(),
+    amount: numericAmount,
     type,
-    category,
+    category: category.trim(),
     frequency,
     date: date ? new Date(date) : new Date(),
   });

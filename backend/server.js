@@ -3,12 +3,12 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
+const { verifyOrigin, getAllowedOrigins } = require('./middleware/csrfProtection');
 
 require('dotenv').config();
 
 // ─────────────────────────────────────────────
-// FIX: Validate required env variables at startup.
-// Server won't start with a silent misconfiguration.
+// Validate required env variables at startup.
 // ─────────────────────────────────────────────
 const REQUIRED_ENV = ['CONNECTION_STRING', 'ACCESS_TOKEN_SECRET', 'REFRESH_TOKEN_SECRET'];
 const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
@@ -23,36 +23,32 @@ connectDb();
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Enable reverse proxy trust for Render / Cloudflare deployments
+app.set('trust proxy', 1);
+
 // ─────────────────────────────────────────────
 // Security middleware
 // ─────────────────────────────────────────────
 
-// FIX: helmet sets secure HTTP headers (XSS protection, content-type sniffing, etc.)
+// Helmet sets secure HTTP headers
 app.use(helmet());
 
-// FIX: Restrict CORS to known frontend origins for Render deployment
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-  : [
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'https://backendfinmate.onrender.com',
-      'https://studysave.netlify.app', // production frontend origin
-    ];
+// Restrict CORS to known frontend origins (supports Render, Netlify, and localhost)
+const allowedOrigins = getAllowedOrigins();
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, Postman)
+      // Allow requests with no origin (mobile apps, curl, server-to-server)
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error(`CORS: origin '${origin}' not allowed`));
       }
     },
-    credentials: true, // Required for HttpOnly cookie transport
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true, // Required for HttpOnly cross-origin cookie transport
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   })
 );
 
@@ -65,33 +61,35 @@ const generalLimiter = rateLimit({
   message: { status: 'error', message: 'Too many requests, please try again later.' },
 });
 
-// Stricter rate limiter for auth endpoints — 10 attempts per 15 minutes
+// Stricter rate limiter for auth endpoints — 15 attempts per 15 minutes
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 15,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { status: 'error', message: 'Too many login attempts, please try again in 15 minutes.' },
+  message: { status: 'error', message: 'Too many authentication attempts, please try again later.' },
 });
 
 app.use(generalLimiter);
 
-// Body parsing with size limit (prevents large-payload attacks)
+// Body parsing with size limit
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 
-// Cookie parsing (required for HttpOnly refresh token cookies)
+// Cookie parsing
 app.use(cookieParser());
 
 // ─────────────────────────────────────────────
 // Routes
 // ─────────────────────────────────────────────
 
-// Apply stricter rate limit to auth endpoints
+// Apply rate limiter and CSRF origin verification on sensitive auth endpoints
 app.use('/api/students/login', authLimiter);
 app.use('/api/students/register', authLimiter);
-app.use('/api/students/refresh', authLimiter);
+app.use('/api/students/refresh', authLimiter, verifyOrigin);
+app.use('/api/students/logout', verifyOrigin);
 app.use('/api/students/oauth/google', authLimiter);
+app.use('/api/auth/exchange', authLimiter, verifyOrigin);
 app.use('/api/auth', authLimiter);
 
 app.use('/api/auth', require('./routes/authRoutes'));

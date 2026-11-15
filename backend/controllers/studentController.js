@@ -3,6 +3,10 @@ const Student = require('../models/studentModel');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const {
+  getRefreshTokenCookieOptions,
+  getCookieClearOptions,
+} = require('../utils/cookieOptions');
 
 // ─────────────────────────────────────────────
 // Token helpers
@@ -12,16 +16,16 @@ const crypto = require('crypto');
  * Generate a short-lived access token (15 min).
  * Payload includes unique jti (JWT ID) to guarantee cryptographic uniqueness
  * even when generated within the same second, and minimal user claims.
- * Shape is compatible with future OAuth 2.1 / OIDC claims.
+ * Shape is compatible with OAuth 2.1 / OIDC claims.
  */
 const generateAccessToken = (user) => {
   return jwt.sign(
     {
-      user: { id: user._id, username: user.username, email: user.email },
+      user: { id: user._id.toString(), username: user.username, email: user.email },
       jti: crypto.randomUUID(),
     },
     process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: '15m', algorithm: 'HS256' }
   );
 };
 
@@ -36,7 +40,7 @@ const generateRefreshToken = (user) => {
       jti: crypto.randomUUID(),
     },
     process.env.REFRESH_TOKEN_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: '7d', algorithm: 'HS256' }
   );
 };
 
@@ -60,8 +64,6 @@ const saveRefreshToken = async (user, rawToken) => {
 
 /**
  * POST /api/students/register
- * FIX: Removed console.log(username, email, password) — was leaking credentials.
- * FIX: Added basic email format and password length validation.
  */
 const registerStudent = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
@@ -89,7 +91,7 @@ const registerStudent = asyncHandler(async (req, res) => {
     throw new Error('An account with this email already exists');
   }
 
-  const hashPassword = await bcrypt.hash(password, 12); // FIX: use 12 rounds (was 10)
+  const hashPassword = await bcrypt.hash(password, 12);
   const student = await Student.create({ username, email, password: hashPassword });
 
   if (student) {
@@ -102,22 +104,17 @@ const registerStudent = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/students/login
- * FIX: Changed && to || in guard (was only erroring when BOTH fields missing).
- * FIX: Removed console.log(email, password) — was leaking credentials.
- * FIX: Now returns both access token (15 min) and a refresh token (7 days).
- * Refresh token is set as an HttpOnly cookie AND returned in body for flexibility.
  */
 const loginStudent = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  // FIX: was `if (!email && !password)` — only caught when BOTH were missing
   if (!email || !password) {
     res.status(400);
     throw new Error('Please provide both email and password');
   }
 
   const user = await Student.findOne({ email });
-  if (!user || !(await bcrypt.compare(password, user.password))) {
+  if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
     res.status(401);
     throw new Error('Invalid email or password');
   }
@@ -126,18 +123,13 @@ const loginStudent = asyncHandler(async (req, res) => {
   const refreshToken = generateRefreshToken(user);
   await saveRefreshToken(user, refreshToken);
 
-  // HttpOnly cookie for refresh token (not accessible by JS → XSS-resistant)
-  res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
-  });
+  // Set secure HttpOnly cookie configured for Netlify/Render
+  res.cookie('refreshToken', refreshToken, getRefreshTokenCookieOptions());
 
   res.status(200).json({
     status: 'success',
-    token: accessToken,          // short-lived, stored in memory on client
-    refreshToken,                // also returned in body for clients that can't use cookies
+    token: accessToken,
+    refreshToken, // Preserved for compatibility with mobile/non-cookie clients and test assertions
   });
 });
 
@@ -145,10 +137,9 @@ const loginStudent = asyncHandler(async (req, res) => {
  * POST /api/students/refresh
  * Issues a new access token when the old one expires.
  * Implements refresh token rotation: old token is invalidated, new one issued.
- * FIX: Proper server-side session invalidation via stored token hashes.
  */
 const refreshAccessToken = asyncHandler(async (req, res) => {
-  // Accept from cookie (preferred) or body fallback
+  // Read from HttpOnly cookie first, with fallback to request body for non-browser clients
   const rawToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
   if (!rawToken) {
@@ -158,7 +149,9 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
   let decoded;
   try {
-    decoded = jwt.verify(rawToken, process.env.REFRESH_TOKEN_SECRET);
+    decoded = jwt.verify(rawToken, process.env.REFRESH_TOKEN_SECRET, {
+      algorithms: ['HS256'],
+    });
   } catch (err) {
     res.status(401);
     throw new Error('Refresh token is invalid or expired — please log in again');
@@ -193,41 +186,46 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
   const newRefreshToken = generateRefreshToken(user);
   await saveRefreshToken(user, newRefreshToken);
 
-  res.cookie('refreshToken', newRefreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  // Set updated cookie
+  res.cookie('refreshToken', newRefreshToken, getRefreshTokenCookieOptions());
 
-  res.status(200).json({ status: 'success', token: newAccessToken, refreshToken: newRefreshToken });
+  res.status(200).json({
+    status: 'success',
+    token: newAccessToken,
+    refreshToken: newRefreshToken,
+  });
 });
 
 /**
  * POST /api/students/logout
- * FIX: Proper server-side logout — invalidates the specific refresh token.
- * Without this, logging out was purely cosmetic (token lived on for 2h).
+ * Server-side logout — invalidates refresh token in DB and clears cookie.
  */
 const logoutStudent = asyncHandler(async (req, res) => {
   const rawToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
-  if (rawToken) {
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    // Remove just this token so other devices stay logged in
-    if (req.user?.id) {
+  if (req.user?.id) {
+    if (req.body?.allDevices) {
+      // Invalidate all active sessions for this account
+      await Student.findByIdAndUpdate(req.user.id, {
+        $set: { refreshTokens: [] },
+      });
+    } else if (rawToken) {
+      // Invalidate current session
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
       await Student.findByIdAndUpdate(req.user.id, {
         $pull: { refreshTokens: { tokenHash } },
       });
     }
   }
 
-  res.clearCookie('refreshToken', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' });
+  // Clear cookie using identical options (secure, sameSite, path)
+  res.clearCookie('refreshToken', getCookieClearOptions());
   res.status(200).json({ status: 'success', message: 'Logged out successfully' });
 });
 
 /**
  * GET /api/students/current
- * FIX: Password hash is stripped from the response.
+ * Strips password and refreshTokens.
  */
 const currentStudent = asyncHandler(async (req, res) => {
   const student = await Student.findById(req.user.id).select('-password -refreshTokens');
@@ -240,7 +238,6 @@ const currentStudent = asyncHandler(async (req, res) => {
 
 /**
  * PUT /api/students/update
- * FIX: Uses req.user.id (from JWT) instead of email lookup for consistency.
  */
 const categoryUpdate = asyncHandler(async (req, res) => {
   const budget = req.body.budget;
@@ -253,13 +250,15 @@ const categoryUpdate = asyncHandler(async (req, res) => {
 
   const updateFields = {};
   for (const key in updatedCategories) {
-    updateFields[`categories.${key}`] = updatedCategories[key];
+    if (typeof updatedCategories[key] === 'number') {
+      updateFields[`categories.${key}`] = updatedCategories[key];
+    }
   }
 
   const student = await Student.findByIdAndUpdate(
     req.user.id,
     { $set: { budget, ...updateFields } },
-    { new: true }
+    { new: true, runValidators: true }
   ).select('-password -refreshTokens');
 
   if (!student) {
@@ -267,14 +266,16 @@ const categoryUpdate = asyncHandler(async (req, res) => {
     throw new Error('Student not found');
   }
 
-  res.status(200).json({ status: 'success', budget: student.budget, categories: student.categories });
+  res.status(200).json({
+    status: 'success',
+    budget: student.budget,
+    categories: student.categories,
+  });
 });
 
 /**
  * POST /api/students/oauth/google
- * OAuth 2.1 / OIDC Google Sign-In endpoint.
- * Accepts Google ID token (credential) from frontend, validates it,
- * creates or logs in the user, and issues secure access + refresh tokens.
+ * Direct GIS ID Token authentication endpoint.
  */
 const googleOAuth = asyncHandler(async (req, res) => {
   const { credential } = req.body;
@@ -287,7 +288,9 @@ const googleOAuth = asyncHandler(async (req, res) => {
   let googleUser;
 
   try {
-    const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+    const verifyRes = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+    );
     if (!verifyRes.ok) {
       res.status(401);
       throw new Error('Invalid Google credential token');
@@ -332,12 +335,7 @@ const googleOAuth = asyncHandler(async (req, res) => {
   const refreshToken = generateRefreshToken(user);
   await saveRefreshToken(user, refreshToken);
 
-  res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  res.cookie('refreshToken', refreshToken, getRefreshTokenCookieOptions());
 
   res.status(200).json({
     status: 'success',

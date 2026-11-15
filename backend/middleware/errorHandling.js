@@ -1,20 +1,30 @@
 const { constants } = require('../constants');
 
 /**
- * Global Express error handler.
+ * Global Express Error Handler
  *
- * FIX: Stack traces are hidden in production (leaking internals is a security risk).
- * FIX: Added missing `break` after FORBIDDEN case (was falling through to SERVER_ERROR).
- * FIX: Error responses now always include the HTTP status code.
+ * Catches Mongoose CastError (invalid ObjectId), JWT errors,
+ * validation errors, and operational exceptions.
+ * Stack traces are omitted in production to prevent information disclosure.
  */
 const errorHandler = (err, req, res, next) => {
-  const statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 500;
   const isDev = process.env.NODE_ENV !== 'production';
+
+  // Mongoose CastError handling (invalid ObjectId format)
+  if (err.name === 'CastError' && err.kind === 'ObjectId') {
+    return res.status(400).json({
+      statusCode: 400,
+      title: 'Validation Failed',
+      message: `Invalid identifier format: ${err.value}`,
+      ...(isDev && { stackTrace: err.stack }),
+    });
+  }
+
+  const statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 500;
 
   const body = {
     statusCode,
     message: err.message,
-    // Only expose stack trace in development
     ...(isDev && { stackTrace: err.stack }),
   };
 
@@ -27,7 +37,6 @@ const errorHandler = (err, req, res, next) => {
 
     case constants.FORBIDDEN:
       return res.status(statusCode).json({ ...body, title: 'Forbidden' });
-    // FIX: was missing break — fell through to SERVER_ERROR
 
     case constants.NOT_FOUND:
       return res.status(statusCode).json({ ...body, title: 'Not Found' });
