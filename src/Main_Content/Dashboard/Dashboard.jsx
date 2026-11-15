@@ -4,6 +4,7 @@ import Cards from './cards';
 import RecentTransactions from './RecentTransactions';
 import SpendingChart from './SpendingChart';
 import { toast } from 'react-toastify';
+import { authFetch } from '../../utils/api';
 
 export default function Dashboard() {
   const [transactions, setTransactions] = useState([]);
@@ -11,23 +12,11 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchTransactions = async () => {
       try {
-        const token = localStorage.getItem('token'); 
-        if (!token) {
-          toast.error('You are not logged in. Please login first!');
-          return;
-        }
-
-        const response = await fetch('https://backendfinmate.onrender.com/api/student/transaction', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+        const response = await authFetch('/api/student/transaction');
 
         if (response.ok) {
           const data = await response.json();
           setTransactions(data.transactions || data);
-          
         } else {
           throw new Error('Failed to fetch transactions');
         }

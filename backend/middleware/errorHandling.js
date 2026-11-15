@@ -1,50 +1,41 @@
-const {constants}=require('../constants')
+const { constants } = require('../constants');
 
+/**
+ * Global Express error handler.
+ *
+ * FIX: Stack traces are hidden in production (leaking internals is a security risk).
+ * FIX: Added missing `break` after FORBIDDEN case (was falling through to SERVER_ERROR).
+ * FIX: Error responses now always include the HTTP status code.
+ */
 const errorHandler = (err, req, res, next) => {
- 
-    const statusCode = res.statusCode ? res.statusCode : 500;
-    switch(statusCode){
-        case constants.VALIDATION_ERROR:res.json({title:"validation Failed",
-            message:err.message,
-            stackTrace:err.stack
-        });
-        break;
-        case constants.NOT_FOUND:res.json({title:"Not Found",
-            message:err.message,
-            stackTrace:err.stack
-        });
-        break;
-        case constants.UNAUTHORIZED:res.json({title:"Unauthorized",
-            message:err.message,
-            stackTrace:err.stack
-        });
-        break;
+  const statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 500;
+  const isDev = process.env.NODE_ENV !== 'production';
 
-        case constants.FORBIDDEN:res.json({title:"Forbidden",
-            message:err.message,
-            stackTrace:err.stack
-        });
+  const body = {
+    statusCode,
+    message: err.message,
+    // Only expose stack trace in development
+    ...(isDev && { stackTrace: err.stack }),
+  };
 
-        case constants.SERVER_ERROR:res.json({title:"Server Error",
-            message:err.message,
-            stackTrace:err.stack
-        });
-        break;
-        default:
-            console.log("No error all good");
-            break;
-    }
-  
-   
+  switch (statusCode) {
+    case constants.VALIDATION_ERROR:
+      return res.status(statusCode).json({ ...body, title: 'Validation Failed' });
 
-    // set response status
-   
-}
+    case constants.UNAUTHORIZED:
+      return res.status(statusCode).json({ ...body, title: 'Unauthorized' });
 
+    case constants.FORBIDDEN:
+      return res.status(statusCode).json({ ...body, title: 'Forbidden' });
+    // FIX: was missing break — fell through to SERVER_ERROR
 
+    case constants.NOT_FOUND:
+      return res.status(statusCode).json({ ...body, title: 'Not Found' });
 
-
-
-
+    case constants.SERVER_ERROR:
+    default:
+      return res.status(statusCode).json({ ...body, title: 'Server Error' });
+  }
+};
 
 module.exports = errorHandler;

@@ -12,11 +12,24 @@ const studentSchema = mongoose.Schema({
   },
   password: {
     type: String,
-    required: [true, "Please add the password"],
+    required: [
+      function () {
+        return this.authProvider === 'local' || !this.authProvider;
+      },
+      "Please add the password",
+    ],
+  },
+  authProvider: {
+    type: String,
+    enum: ['local', 'google'],
+    default: 'local',
+  },
+  googleId: {
+    type: String,
   },
   currency: {
     type: String,
-    default: "INR", // Optional, for currency converter
+    default: "INR",
   },
   budget: {
     type: Number,
@@ -31,7 +44,15 @@ const studentSchema = mongoose.Schema({
     Clothes: { type: Number, default: 0 },
     Utilities: { type: Number, default: 0 },
     Other: { type: Number, default: 0 },
-  }
+  },
+  // Stores hashed refresh tokens for server-side session invalidation.
+  // Each entry: { tokenHash, expiresAt }
+  refreshTokens: [
+    {
+      tokenHash: { type: String, required: true },
+      expiresAt: { type: Date, required: true },
+    },
+  ],
 }, {
   timestamps: true,
 });

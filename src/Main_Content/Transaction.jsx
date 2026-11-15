@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Pencil, Trash2, Save, X } from 'lucide-react';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { authFetch } from '../utils/api';
 
 export default function TransactionList() {
   const [transactions, setTransactions] = useState([]);
@@ -12,17 +13,10 @@ export default function TransactionList() {
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState({});
 
-  const token = localStorage.getItem('token');
-
   useEffect(() => {
     const fetchTransactions = async () => {
       try {
-        const response = await fetch('https://backendfinmate.onrender.com/api/student/transaction', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+        const response = await authFetch('/api/student/transaction');
         if (!response.ok) throw new Error('Failed to fetch transactions');
         const data = await response.json();
         setTransactions(data.transactions || data);
@@ -53,12 +47,8 @@ export default function TransactionList() {
 
   const handleDelete = async (transactionId) => {
     try {
-      const response = await fetch(`https://backendfinmate.onrender.com/api/student/transaction/${transactionId}`, {
+      const response = await authFetch(`/api/student/transaction/${transactionId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
       });
       if (!response.ok) throw new Error('Failed to delete transaction');
       setTransactions(transactions.filter(txn => txn._id !== transactionId));
@@ -74,7 +64,7 @@ export default function TransactionList() {
     setEditData({
       title: txn.title,
       category: txn.category,
-      date: txn.date.slice(0, 10),
+      date: txn.date ? txn.date.slice(0, 10) : '',
       description: txn.description,
       amount: txn.amount,
     });
@@ -92,13 +82,14 @@ export default function TransactionList() {
 
   const handleEditSubmit = async (txnId) => {
     try {
-      const response = await fetch(`https://backendfinmate.onrender.com/api/student/transaction/${txnId}`, {
+      const response = await authFetch(`/api/student/transaction/${txnId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(editData),
+        body: JSON.stringify({
+          title: editData.title,
+          category: editData.category,
+          date: editData.date,
+          amount: parseFloat(editData.amount),
+        }),
       });
 
       if (!response.ok) throw new Error('Failed to update transaction');

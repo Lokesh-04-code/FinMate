@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { toast } from 'react-toastify';
+import { loginUser } from '../utils/api';
+import GoogleOAuthButton from '../components/GoogleOAuthButton';
 
 const Login = (props) => {
     const [email, setEmail] = useState('');
@@ -7,37 +9,25 @@ const Login = (props) => {
     const [loading, setLoading] = useState(false);
 
     const handleLogin = async () => {
-        const loginData = {
-            email: email,
-            password: password,
-        };
+        if (!email || !password) {
+            toast.warn('Please enter both email and password.');
+            return;
+        }
 
         setLoading(true);
         try {
-            const response = await fetch('https://backendfinmate.onrender.com/api/students/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(loginData),
-            });
-
-            const result = await response.json();
-
-            if (response.ok) {
-                toast.success('Login successful!');
-                props.toggle((val) => !val);
-                localStorage.setItem('token', result.token);
-                console.log(result.token);
-                // window.location.href = '/dashboard';
-            } else {
-                toast.error(result.message || 'Login failed!');
-            }
+            await loginUser(email, password);
+            toast.success('Login successful!');
+            props.toggle((val) => !val);
         } catch (error) {
-            toast.error('An error occurred. Please try again.');
+            toast.error(error.message || 'Login failed!');
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleOAuthSuccess = () => {
+        props.toggle((val) => !val);
     };
 
     return (
@@ -47,7 +37,7 @@ const Login = (props) => {
                     <h1 className="text-4xl font-bold text-white">FinMate</h1>
                     <p className="text-gray-300 mt-2">Smart Student Expense Tracker</p>
                 </div>
-                <div className="space-y-6">
+                <div className="space-y-5">
                     <div>
                         <label htmlFor="email" className="block text-sm font-medium text-gray-200">Email</label>
                         <input
@@ -81,6 +71,18 @@ const Login = (props) => {
                     >
                         {loading ? 'Signing In...' : 'Sign In'}
                     </button>
+
+                    {/* OAuth Divider */}
+                    <div className="flex items-center my-4">
+                        <div className="flex-grow border-t border-gray-600"></div>
+                        <span className="flex-shrink mx-4 text-gray-300 text-xs uppercase tracking-wider">
+                            or
+                        </span>
+                        <div className="flex-grow border-t border-gray-600"></div>
+                    </div>
+
+                    {/* Google OAuth 2.1 Sign-In Button */}
+                    <GoogleOAuthButton onSuccess={handleOAuthSuccess} />
 
                     {loading && (
                         <div className="text-yellow-400 text-sm text-center mt-2">

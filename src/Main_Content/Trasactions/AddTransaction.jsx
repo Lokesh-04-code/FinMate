@@ -2,8 +2,9 @@ import { motion } from 'framer-motion';
 import React, { useState } from 'react';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { authFetch } from '../../utils/api';
+
 const AddTransaction = () => {
-  const token = localStorage.getItem('token');
   const [formData, setFormData] = useState({
     title: '',
     type: '',
@@ -23,15 +24,18 @@ const AddTransaction = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch("https://backendfinmate.onrender.com/api/student/transaction", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify(formData),
+      const payload = {
+        title: formData.title,
+        type: formData.type,
+        category: formData.category,
+        amount: parseFloat(formData.amount),
+      };
+
+      const response = await authFetch('/api/student/transaction', {
+        method: 'POST',
+        body: JSON.stringify(payload),
       });
-     console.log(response)
+
       if (response.ok) {
         toast.success("Transaction saved successfully!");
         setFormData({
@@ -41,9 +45,9 @@ const AddTransaction = () => {
           amount: '',
           description: ''
         });
-        
       } else {
-        toast.error("Failed to save transaction.");
+        const errData = await response.json().catch(() => ({}));
+        toast.error(errData.message || "Failed to save transaction.");
       }
     } catch (error) {
       console.error("Error:", error);

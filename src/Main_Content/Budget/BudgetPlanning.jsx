@@ -1,48 +1,30 @@
 import React, { useEffect, useState } from 'react';
 import BudgetProgress from './BudgetProgress';
 import UpdateBudget from './UpdateBudget';
+import { authFetch } from '../../utils/api';
 
 export default function BudgetPlanning() {
   const [transactions, setTransactions] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [rerender,setrerender]=useState(false)
+  const [rerender, setrerender] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        console.error('No token found in localStorage.');
-        return;
-      }
-
       try {
         // Fetch current user
-        const userRes = await fetch('https://backendfinmate.onrender.com/api/students/current', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+        const userRes = await authFetch('/api/students/current');
 
         if (!userRes.ok) throw new Error('Failed to fetch user');
         const userData = await userRes.json();
-        console.log(userData)
         setCurrentUser(userData);
-        
 
         // Fetch transactions
-        const transRes = await fetch('https://backendfinmate.onrender.com/api/student/transaction', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+        const transRes = await authFetch('/api/student/transaction');
 
         if (!transRes.ok) throw new Error('Failed to fetch transactions');
         const transData = await transRes.json();
-        console.log(transData)
-        setTransactions( transData); // Adjust if your backend returns { transactions: [...] }
+        setTransactions(transData.transactions || transData);
         setLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);

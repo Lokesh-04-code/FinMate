@@ -1,103 +1,137 @@
-const asyncHandler=require('express-async-handler');
-const student=require('../models/studentModel');
-const RecurringTransaction=require('../models/recursiveTransactionModel')
+const asyncHandler = require('express-async-handler');
+const RecurringTransaction = require('../models/recursiveTransactionModel');
 
-const getRecTrannsactions=asyncHandler(async (req,res)=>{
-    const  Transaction=await RecurringTransaction.find({user:req.user.id})
-    res.status(200).json(Transaction)
-})
+/**
+ * GET /api/student/rec
+ * Returns only recurring transactions belonging to the authenticated user.
+ */
+const getRecTrannsactions = asyncHandler(async (req, res) => {
+  const transactions = await RecurringTransaction.find({ user: req.user.id });
+  res.status(200).json(transactions);
+});
 
+/**
+ * GET /api/student/rec/:id
+ */
 const getRecurringTransaction = asyncHandler(async (req, res) => {
-    const recurringTransaction = await RecurringTransaction.findById(req.params.id);
-    
-    if (!recurringTransaction) {
-        res.status(404);
-        throw new Error("Recurring transaction not found");
-    }
-    
-    if (recurringTransaction.user.toString() !== req.user.id) {
-        res.status(403);
-        throw new Error("User not permitted to access this recurring transaction");
-    }
+  const recurringTransaction = await RecurringTransaction.findById(req.params.id);
 
-    res.status(200).json(recurringTransaction);
+  if (!recurringTransaction) {
+    res.status(404);
+    throw new Error('Recurring transaction not found');
+  }
+
+  if (recurringTransaction.user.toString() !== req.user.id) {
+    res.status(403);
+    throw new Error('Access denied — this transaction belongs to another user');
+  }
+
+  res.status(200).json(recurringTransaction);
 });
 
+/**
+ * PUT /api/student/rec/:id
+ * FIX: Whitelisted fields prevent MongoDB operator injection.
+ */
 const updateRecurringTransaction = asyncHandler(async (req, res) => {
-    const recurringTransaction = await RecurringTransaction.findById(req.params.id);
+  const recurringTransaction = await RecurringTransaction.findById(req.params.id);
 
-    if (!recurringTransaction) {
-        res.status(404);
-        throw new Error("Recurring transaction not found");
-    }
+  if (!recurringTransaction) {
+    res.status(404);
+    throw new Error('Recurring transaction not found');
+  }
 
-    if (recurringTransaction.user.toString() !== req.user.id) {
-        res.status(403);
-        throw new Error("User not permitted to update this recurring transaction");
-    }
+  if (recurringTransaction.user.toString() !== req.user.id) {
+    res.status(403);
+    throw new Error('Access denied — this transaction belongs to another user');
+  }
 
-    const updatedRecurringTransaction = await RecurringTransaction.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,  // Ensures the updated document is returned
-    });
+  // Whitelist updatable fields
+  const { title, amount, type, category, frequency, date } = req.body;
+  const updatePayload = {};
+  if (title !== undefined) updatePayload.title = title;
+  if (amount !== undefined) updatePayload.amount = amount;
+  if (type !== undefined) updatePayload.type = type;
+  if (category !== undefined) updatePayload.category = category;
+  if (frequency !== undefined) updatePayload.frequency = frequency;
+  if (date !== undefined) updatePayload.date = new Date(date);
 
-    res.status(200).json(updatedRecurringTransaction);
+  const updatedRecurringTransaction = await RecurringTransaction.findByIdAndUpdate(
+    req.params.id,
+    { $set: updatePayload },
+    { new: true, runValidators: true }
+  );
+
+  res.status(200).json(updatedRecurringTransaction);
 });
 
+/**
+ * DELETE /api/student/rec/:id
+ */
 const deleteRecurringTransaction = asyncHandler(async (req, res) => {
-    const recurringTransaction = await RecurringTransaction.findById(req.params.id);
+  const recurringTransaction = await RecurringTransaction.findById(req.params.id);
 
-    if (!recurringTransaction) {
-        res.status(404);
-        throw new Error("Recurring transaction not found");
-    }
+  if (!recurringTransaction) {
+    res.status(404);
+    throw new Error('Recurring transaction not found');
+  }
 
-    if (recurringTransaction.user.toString() !== req.user.id) {
-        res.status(403);
-        throw new Error("User not permitted to delete this recurring transaction");
-    }
+  if (recurringTransaction.user.toString() !== req.user.id) {
+    res.status(403);
+    throw new Error('Access denied — this transaction belongs to another user');
+  }
 
-    const deletedRecurringTransaction = await RecurringTransaction.findByIdAndDelete(req.params.id);
-    
-    res.status(200).json(deletedRecurringTransaction);
+  const deletedRecurringTransaction = await RecurringTransaction.findByIdAndDelete(req.params.id);
+  res.status(200).json(deletedRecurringTransaction);
 });
 
-
-
+/**
+ * POST /api/student/rec
+ * FIX: Was referencing `Student` (capital S) but the import was `student` (lowercase)
+ *      causing ReferenceError: Student is not defined.
+ * FIX: Now uses req.user.id directly — no extra DB lookup needed.
+ */
 const createRecurringTransaction = asyncHandler(async (req, res) => {
-    const { title, amount, type, category, frequency, date } = req.body;
-    const { email } = req.user; // Assuming user info is in req.user
+  const { title, amount, type, category, frequency, date } = req.body;
+  const userId = req.user.id; // FIX: use directly from JWT
 
-    // Find the student (user) by email
-    const student1 = await Student.findOne({ email });
-    const userId = student1.id;
+  if (!title || amount === undefined || !type || !category || !frequency) {
+    res.status(400);
+    throw new Error('Please fill all required fields: title, amount, type, category, and frequency');
+  }
 
-    // Check if required fields are present
-    if (!title || !amount || !type || !category || !frequency) {
-        res.status(400);
-        throw new Error("Please fill all the required fields (title, amount, type, category, and frequency)");
-    }
+  if (!['income', 'expense'].includes(type)) {
+    res.status(400);
+    throw new Error('type must be either "income" or "expense"');
+  }
 
-    // Validate the frequency for the recurring transaction (daily, weekly, monthly)
-    if (!['daily', 'weekly', 'monthly'].includes(frequency)) {
-        res.status(400);
-        throw new Error("Invalid frequency for recurring transaction. Choose daily, weekly, or monthly.");
-    }
+  if (typeof amount !== 'number' || amount <= 0) {
+    res.status(400);
+    throw new Error('amount must be a positive number');
+  }
 
-    // Create the new recurring transaction
-    const newRecurringTransaction = await RecurringTransaction.create({
-        user: userId,
-        title,
-        amount,
-        type,
-        category,
-        frequency,
-        date: date || new Date(), // Use provided date or default to now
-    });
+  if (!['daily', 'weekly', 'monthly'].includes(frequency)) {
+    res.status(400);
+    throw new Error('frequency must be "daily", "weekly", or "monthly"');
+  }
 
-    // Send back the recurring transaction response
-    res.status(201).json(newRecurringTransaction);
+  const newRecurringTransaction = await RecurringTransaction.create({
+    user: userId,
+    title,
+    amount,
+    type,
+    category,
+    frequency,
+    date: date ? new Date(date) : new Date(),
+  });
+
+  res.status(201).json(newRecurringTransaction);
 });
 
-
-
-module.exports={createRecurringTransaction,deleteRecurringTransaction,updateRecurringTransaction,getRecTrannsactions,getRecurringTransaction}
+module.exports = {
+  createRecurringTransaction,
+  deleteRecurringTransaction,
+  updateRecurringTransaction,
+  getRecTrannsactions,
+  getRecurringTransaction,
+};

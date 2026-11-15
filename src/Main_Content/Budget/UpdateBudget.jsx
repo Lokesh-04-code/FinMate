@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { authFetch } from '../../utils/api';
 
 const EXPENSE_CATEGORIES = [
   'Food', 'Transport', 'Healthcare', 'Personal',
   'Education', 'Clothes', 'Utilities', 'Other'
 ];
 
-function UpdateBudget({ user ,rerender}) {
-  const token = localStorage.getItem('token');
+function UpdateBudget({ user, rerender }) {
   const [totalAmount, setTotalAmount] = useState(user?.budget?.toString() || '0');
   const [categoryAmounts, setCategoryAmounts] = useState({});
   const [remaining, setRemaining] = useState(0);
@@ -48,12 +48,8 @@ function UpdateBudget({ user ,rerender}) {
     });
 
     try {
-      const res = await fetch('https://backendfinmate.onrender.com/api/students/update', {
+      const res = await authFetch('/api/students/update', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`, // Use token from props or localStorage
-        },
         body: JSON.stringify(data),
       });
 
@@ -63,8 +59,7 @@ function UpdateBudget({ user ,rerender}) {
 
       const updatedUser = await res.json();
       alert('✅ Budget updated successfully!');
-      rerender((val)=>!val)
-      console.log('Updated User:', updatedUser);
+      if (rerender) rerender((val) => !val);
     } catch (err) {
       console.error(err);
       alert('❌ Failed to update budget.');
